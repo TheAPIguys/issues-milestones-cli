@@ -1,0 +1,8 @@
+i-gh
+i-gh.exe
+
+*.test
+coverage.out
+
+.idea/
+.vscode/
