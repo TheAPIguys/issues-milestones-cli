@@ -117,14 +117,18 @@ type Model struct {
 	filter      string
 	filtering   bool
 
-	detail           *gh.IssueDetail
-	detailCache      map[int]gh.IssueDetail
-	detailNumber     int
-	detailLoading    bool
-	detailError      string
-	commentsExpanded bool
-	detailOffset     int
-	worktreeLoading  bool
+	detail                      *gh.IssueDetail
+	detailCache                 map[int]gh.IssueDetail
+	detailNumber                int
+	detailLoading               bool
+	detailError                 string
+	commentsExpanded            bool
+	detailOffset                int
+	detailLinesCache            []string
+	detailLinesWidth            int
+	detailLinesCommentsExpanded bool
+	detailLinesCached           bool
+	worktreeLoading             bool
 
 	dependencyCache   map[int]gh.IssueDependencies
 	dependencyLoading bool
@@ -207,7 +211,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.summary = &summary
 		m.groups = buildGroups(summary)
 		m.restoreSelection(oldGroupID, oldIssueNumber)
-		m.detail = nil
+		m.setDetail(nil)
 		m.detailError = ""
 		m.detailLoading = false
 		m.detailCache = make(map[int]gh.IssueDetail)
@@ -224,13 +228,13 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.detailLoading = false
 		if message.err != nil {
-			m.detail = nil
+			m.setDetail(nil)
 			m.detailError = gh.FriendlyError(message.err)
 			return m, nil
 		}
 		detail := message.detail
 		m.detailCache[message.number] = detail
-		m.detail = &detail
+		m.setDetail(&detail)
 		m.detailError = ""
 		m.detailOffset = 0
 		m.commentsExpanded = false
@@ -278,6 +282,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(message)
+	case tea.MouseMsg:
+		return m.handleMouse(message)
 	}
 	return m, nil
 }
@@ -452,7 +458,7 @@ func (m *Model) handleDashboardKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "Type to filter issues, Enter to apply, Esc to cancel"
 	case "r":
 		m.screen = screenLoading
-		m.detail = nil
+		m.setDetail(nil)
 		m.status = "Refreshing..."
 		return m, m.loadSummaryCmd(m.repo)
 	case "R":
@@ -563,6 +569,24 @@ func (m *Model) handleDetailKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) handleMouse(message tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.screen != screenDetail || m.detailLoading || m.detail == nil {
+		return m, nil
+	}
+
+	step := max(1, m.height/4)
+	switch message.Button {
+	case tea.MouseButtonWheelUp:
+		m.detailOffset -= step
+	case tea.MouseButtonWheelDown:
+		m.detailOffset += step
+	default:
+		return m, nil
+	}
+	m.clampDetailOffset()
+	return m, nil
+}
+
 func (m *Model) handleErrorKey(message tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch message.String() {
 	case "q":
@@ -646,7 +670,7 @@ func (m *Model) selectRepository(repository gh.Repository) {
 	}
 	m.summary = nil
 	m.groups = nil
-	m.detail = nil
+	m.setDetail(nil)
 	m.detailCache = make(map[int]gh.IssueDetail)
 	m.dependencyCache = make(map[int]gh.IssueDependencies)
 	m.detailError = ""
@@ -656,6 +680,12 @@ func (m *Model) selectRepository(repository gh.Repository) {
 	m.detailOffset = 0
 	m.groupCursor = 0
 	m.issueCursor = 0
+}
+
+func (m *Model) setDetail(detail *gh.IssueDetail) {
+	m.detail = detail
+	m.detailLinesCache = nil
+	m.detailLinesCached = false
 }
 
 func (m *Model) openDetail() (tea.Model, tea.Cmd) {
@@ -669,12 +699,12 @@ func (m *Model) openDetail() (tea.Model, tea.Cmd) {
 	m.commentsExpanded = false
 	m.detailOffset = 0
 	if detail, ok := m.detailCache[issue.Number]; ok {
-		m.detail = &detail
+		m.setDetail(&detail)
 		m.screen = screenDetail
 		m.detailLoading = false
 		return m, nil
 	}
-	m.detail = nil
+	m.setDetail(nil)
 	m.detailLoading = true
 	m.screen = screenDetail
 	return m, m.loadDetailCmd(m.repo, issue.Number)
@@ -696,7 +726,7 @@ func (m *Model) moveGroup(delta int) {
 	}
 	m.groupCursor = clamp(m.groupCursor+delta, 0, len(m.groups)-1)
 	m.issueCursor = 0
-	m.detail = nil
+	m.setDetail(nil)
 	m.detailError = ""
 }
 
@@ -707,7 +737,7 @@ func (m *Model) moveIssue(delta int) {
 		return
 	}
 	m.issueCursor = clamp(m.issueCursor+delta, 0, len(issues)-1)
-	m.detail = nil
+	m.setDetail(nil)
 	m.detailError = ""
 }
 
@@ -1141,12 +1171,20 @@ func (m *Model) detailLines() []string {
 	if m.detail == nil {
 		return nil
 	}
+	width := max(20, m.width-4)
+	if m.detailLinesCached && m.detailLinesWidth == width && m.detailLinesCommentsExpanded == m.commentsExpanded {
+		return m.detailLinesCache
+	}
 	markdown := format.IssueMarkdown(m.repo, *m.detail, m.commentsExpanded)
-	rendered, err := format.RenderMarkdown(markdown, max(20, m.width-4))
+	rendered, err := format.RenderMarkdown(markdown, width)
 	if err != nil {
 		rendered = markdown
 	}
-	return strings.Split(strings.TrimRight(rendered, "\n"), "\n")
+	m.detailLinesCache = strings.Split(strings.TrimRight(rendered, "\n"), "\n")
+	m.detailLinesWidth = width
+	m.detailLinesCommentsExpanded = m.commentsExpanded
+	m.detailLinesCached = true
+	return m.detailLinesCache
 }
 
 func (m *Model) maxDetailOffset() int {

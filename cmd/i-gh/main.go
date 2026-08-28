@@ -29,6 +29,7 @@ func main() {
 	program := tea.NewProgram(
 		app.New(gh.NewClient(""), storedConfig, *repo),
 		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
 	)
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "i-gh: %v\n", err)

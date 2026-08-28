@@ -136,6 +136,56 @@ func TestDetailViewChangesAfterOneScroll(t *testing.T) {
 	}
 }
 
+func TestDetailLinesCacheTracksWidthAndComments(t *testing.T) {
+	model := &Model{
+		width: 80,
+		detail: &gh.IssueDetail{
+			IssueSummary: gh.IssueSummary{Number: 42, Title: "Cached issue"},
+			Body:         "Issue body.",
+			Comments:     []gh.Comment{{Body: "A comment."}},
+		},
+	}
+
+	first := model.detailLines()
+	second := model.detailLines()
+	if len(first) == 0 || &first[0] != &second[0] {
+		t.Fatal("detail lines were rendered more than once for the same view")
+	}
+
+	model.width = 60
+	resized := model.detailLines()
+	if &first[0] == &resized[0] {
+		t.Fatal("detail lines cache was not rebuilt after a width change")
+	}
+
+	model.commentsExpanded = true
+	expanded := model.detailLines()
+	if &resized[0] == &expanded[0] {
+		t.Fatal("detail lines cache was not rebuilt after expanding comments")
+	}
+}
+
+func TestDetailMouseWheelScrollsByViewportStep(t *testing.T) {
+	model := &Model{
+		screen: screenDetail,
+		width:  80,
+		height: 12,
+		detail: &gh.IssueDetail{
+			IssueSummary: gh.IssueSummary{Number: 42, Title: "Scrollable issue"},
+			Body:         strings.Repeat("A long line of issue content.\n", 40),
+		},
+	}
+
+	model.Update(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
+	if model.detailOffset != 3 {
+		t.Fatalf("wheel down offset = %d, want 3", model.detailOffset)
+	}
+	model.Update(tea.MouseMsg{Button: tea.MouseButtonWheelUp})
+	if model.detailOffset != 0 {
+		t.Fatalf("wheel up offset = %d, want 0", model.detailOffset)
+	}
+}
+
 func TestIssueFilterMatchesIssueNumber(t *testing.T) {
 	model := &Model{
 		groups: buildGroups(gh.Summary{Issues: []gh.IssueSummary{

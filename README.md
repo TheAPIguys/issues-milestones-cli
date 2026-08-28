@@ -46,12 +46,12 @@ git-wt --version
 
 ## Installation
 
-### Install the v0.1.0 release
+### Install the v0.2.0 release
 
 No clone is required. Install the published release directly with Go:
 
 ```text
-go install github.com/TheAPIguys/issues-milestones-cli/cmd/i-gh@v0.1.0
+go install github.com/TheAPIguys/issues-milestones-cli/cmd/i-gh@v0.2.0
 ```
 
 Use a newer release tag in this command when one is published.
